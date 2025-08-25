@@ -27,20 +27,35 @@ var DefaultDNS1 = netip.MustParseAddr(`1.1.1.1`)
 var DefaultHostLookupTimeout = 10 * time.Second
 
 type Peer struct {
-	EndpointAddress string
-	LocalAddresses  []string
-	DNSAddresses    []string
-	PublicKey       string
-	PrivateKey      string
-	AllowedIPs      []string
-	CheckURL        string
-	CheckTimeout    time.Duration
-	wg              *Wireguard
-	tun             tun.Device
-	tnet            *netstack.Net
-	dev             *device.Device
-	endpointAddr    string
-	endpointPort    int
+	EndpointAddress  string
+	LocalAddresses   []string
+	DNSAddresses     []string
+	PublicKey        string
+	PrivateKey       string
+	AllowedIPs       []string
+	CheckURL         string
+	CheckTimeout     time.Duration
+	RetryDelay       time.Duration
+	ProxyHTTPAddress string
+	wg               *Wireguard
+	tun              tun.Device
+	tnet             *netstack.Net
+	dev              *device.Device
+	endpointAddr     string
+	endpointPort     int
+}
+
+func (peer *Peer) reset() {
+	if peer.dev != nil {
+		peer.dev.Close()
+	}
+
+	peer.wg = nil
+	peer.tun = nil
+	peer.tnet = nil
+	peer.dev = nil
+	peer.endpointAddr = ``
+	peer.endpointPort = 0
 }
 
 func (peer *Peer) init() error {
@@ -189,11 +204,32 @@ func (peer *Peer) validate() error {
 	}
 }
 
-func (peer *Peer) RunProxy(address string) error {
-	if err := peer.init(); err != nil {
-		return err
-	}
+func (peer *Peer) Up() error {
 
+	for {
+		var lasterr error
+
+		if err := peer.init(); err == nil {
+			lasterr = peer.RunProxy(peer.ProxyHTTPAddress)
+		} else {
+			lasterr = err
+		}
+
+		if peer.RetryDelay > 0 {
+			peer.reset()
+
+			if lasterr != nil {
+				log.Errorf("peer failure: %v", lasterr)
+			}
+
+			time.Sleep(peer.RetryDelay)
+		} else {
+			return lasterr
+		}
+	}
+}
+
+func (peer *Peer) RunProxy(address string) error {
 	var handler = &proxy{
 		Tunnel: peer.tnet,
 	}
@@ -212,10 +248,10 @@ func (peer *Peer) RunProxy(address string) error {
 }
 
 func base64ToHex(base64Key string) string {
-	decodedKey, err := base64.StdEncoding.DecodeString(base64Key)
-	if err != nil {
-		log.Panic("Failed to decode base64 key:", err)
+	if bin, err := base64.StdEncoding.DecodeString(base64Key); err == nil {
+		return hex.EncodeToString(bin)
+	} else {
+		log.Panic("failed to decode base64 key:", err)
+		return ``
 	}
-	hexKey := hex.EncodeToString(decodedKey)
-	return hexKey
 }

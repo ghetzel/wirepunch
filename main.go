@@ -65,6 +65,11 @@ func main() {
 			EnvVar: `WP_CHECK_TIMEOUT`,
 			Value:  30 * time.Second,
 		},
+		cli.DurationFlag{
+			Name:   `retry-delay, R`,
+			Usage:  `If provided, keep trying to start the connection forever, waiting this long between attempts.`,
+			EnvVar: `WP_RETRY_DELAY`,
+		},
 	}
 
 	app.Action = func(c *cli.Context) {
@@ -76,13 +81,15 @@ func main() {
 			DNSAddresses: []string{
 				c.String(`dns-server`),
 			},
-			PublicKey:    c.String(`public-key`),
-			PrivateKey:   c.String(`private-key`),
-			CheckURL:     c.String(`check-url`),
-			CheckTimeout: c.Duration(`check-url-timeout`),
+			PublicKey:        c.String(`public-key`),
+			PrivateKey:       c.String(`private-key`),
+			CheckURL:         c.String(`check-url`),
+			CheckTimeout:     c.Duration(`check-url-timeout`),
+			RetryDelay:       c.Duration(`retry-delay`),
+			ProxyHTTPAddress: c.String(`http-proxy`),
 		}
 
-		log.FatalIf(peer.RunProxy(c.String(`http-proxy`)))
+		log.FatalIf(peer.Up())
 	}
 
 	app.Run(os.Args)
