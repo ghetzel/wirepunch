@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 
+	"github.com/ghetzel/go-stockutil/log"
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
@@ -40,10 +41,21 @@ func (w *Wireguard) CreateDevice(tunDevice tun.Device, logLevel int) (*device.De
 	dev := device.NewDevice(
 		tunDevice,
 		conn.NewDefaultBind(),
-		device.NewLogger(logLevel, "WireProx"),
+		&device.Logger{
+			Verbosef: logVerbosef,
+			Errorf:   logErrorf,
+		},
 	)
 	if dev == nil {
-		return nil, fmt.Errorf("Failed to create device")
+		return nil, fmt.Errorf("failed to create device")
 	}
 	return dev, nil
+}
+
+func logVerbosef(format string, args ...any) {
+	log.Debugf(format, args...)
+}
+
+func logErrorf(format string, args ...any) {
+	log.Errorf(format, args...)
 }

@@ -20,7 +20,7 @@ func main() {
 		cli.StringFlag{
 			Name:   `http-proxy`,
 			Usage:  `Address the HTTP proxy server should listen on`,
-			Value:  DefaultProxyAddress,
+			Value:  DefaultProxyHTTPAddress,
 			EnvVar: `WP_PROXY_HTTP_ADDRESS`,
 		},
 		cli.StringFlag{
@@ -79,7 +79,7 @@ func main() {
 			PublicKey:    c.String(`public-key`),
 			PrivateKey:   c.String(`private-key`),
 			CheckURL:     c.String(`check-url`),
-			CheckTimeout: c.Duration(`check-timeout`),
+			CheckTimeout: c.Duration(`check-url-timeout`),
 		}
 
 		log.FatalIf(peer.RunProxy(c.String(`http-proxy`)))

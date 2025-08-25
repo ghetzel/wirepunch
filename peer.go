@@ -1,23 +1,30 @@
 package main
 
 import (
+	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"math/rand"
+	"net"
 	"net/http"
 	"net/netip"
 	"strings"
 	"time"
 
 	"github.com/ghetzel/go-stockutil/log"
+	"github.com/ghetzel/go-stockutil/typeutil"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
 var DefaultMTU int = 1500
-var DefaultProxyAddress = `127.0.0.1:1080`
+var DefaultProxyHTTPAddress = `127.0.0.1:8080`
+var DefaultProxySOCKS5Address = `127.0.0.1:1080`
 var DefaultDNS1 = netip.MustParseAddr(`1.1.1.1`)
+var DefaultHostLookupTimeout = 10 * time.Second
 
 type Peer struct {
 	EndpointAddress string
@@ -32,6 +39,8 @@ type Peer struct {
 	tun             tun.Device
 	tnet            *netstack.Net
 	dev             *device.Device
+	endpointAddr    string
+	endpointPort    int
 }
 
 func (peer *Peer) init() error {
@@ -44,7 +53,29 @@ func (peer *Peer) init() error {
 		return fmt.Errorf("must provide a Wireguard public key")
 	} else if peer.PrivateKey == `` {
 		return fmt.Errorf("must provide a Wireguard private key")
-	} else if _, err := netip.ParseAddrPort(peer.EndpointAddress); err != nil {
+	} else if host, port, err := net.SplitHostPort(peer.EndpointAddress); err == nil {
+		var ctx, cancel = context.WithTimeout(context.Background(), DefaultHostLookupTimeout)
+		defer cancel()
+
+		if ips, err := net.DefaultResolver.LookupIP(ctx, `ip4`, host); err == nil {
+			if len(ips) > 0 {
+				peer.endpointAddr = ips[rand.Intn(len(ips))].String()
+				peer.endpointPort = typeutil.NInt(port)
+			} else {
+				return fmt.Errorf("bad endpoint %q: no IPs returned for host", host)
+			}
+
+			// ensure the ip:port parses
+			if _, err := netip.ParseAddrPort(net.JoinHostPort(
+				peer.endpointAddr,
+				typeutil.String(peer.endpointPort),
+			)); err != nil {
+				return fmt.Errorf("bad endpoint %q: %v", peer.EndpointAddress, err)
+			}
+		} else {
+			return fmt.Errorf("bad endpoint %q: %v", peer.EndpointAddress, err)
+		}
+	} else {
 		return fmt.Errorf("bad endpoint %q: %v", peer.EndpointAddress, err)
 	}
 
@@ -105,9 +136,16 @@ func (peer *Peer) init() error {
 	}
 
 	// configure Wireguard
-	if err := peer.dev.IpcSet(strings.Join(peer.configLines(), "\n")); err == nil {
+	var lines = peer.configLines()
+
+	for _, line := range lines {
+		log.Debugf("config: %v", line)
+	}
+
+	if err := peer.dev.IpcSet(strings.Join(lines, "\n")); err == nil {
 		// raise interface
 		if err := peer.dev.Up(); err == nil {
+			log.Noticef("wirepunch peer active %v -> [%v:%d]", peer.LocalAddresses, peer.endpointAddr, peer.endpointPort)
 			return peer.validate()
 		} else {
 			return fmt.Errorf("cannot start Wireguard: %v", err)
@@ -122,30 +160,33 @@ func (peer *Peer) configLines() []string {
 		fmt.Sprintf("private_key=%v", base64ToHex(peer.PrivateKey)),
 		fmt.Sprintf("public_key=%v", base64ToHex(peer.PublicKey)),
 		fmt.Sprintf("allowed_ip=%v", strings.Join(peer.AllowedIPs, `,`)),
-		fmt.Sprintf("endpoint=%v", peer.EndpointAddress),
+		fmt.Sprintf("endpoint=%v:%d", peer.endpointAddr, peer.endpointPort),
 	}
 }
 
 func (peer *Peer) validate() error {
-	// client := http.Client{
-	// 	Timeout: 30 * time.Second,
-	// 	Transport: &http.Transport{
-	// 		DialContext:     tnet.DialContext,
-	// 		TLSClientConfig: &tls.Config{},
-	// 	},
-	// }
+	if peer.CheckURL == `` || peer.CheckTimeout == 0 {
+		return nil
+	}
 
-	// resp, err := client.Get(executil.Env(`BF_CHECK_URL`, `https://api.ipify.org?format=json`))
-	// if err != nil {
-	// 	log.Panic(err)
-	// }
-	// body, err := io.ReadAll(resp.Body)
-	// if err != nil {
-	// 	log.Panic(err)
-	// }
-	// fmt.Printf("Connected to remote host! Using IP address for proxy: %s\n", string(body))
+	var client = http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			DialContext:     peer.tnet.DialContext,
+			TLSClientConfig: &tls.Config{},
+		},
+	}
 
-	return nil
+	if resp, err := client.Get(peer.CheckURL); err == nil {
+		if resp.StatusCode < http.StatusBadRequest {
+			log.Infof("connection check passed: HTTP %v", resp.Status)
+			return nil
+		} else {
+			return fmt.Errorf("connection check failed: HTTP %v", resp.Status)
+		}
+	} else {
+		return fmt.Errorf("connection check failed: %v", err)
+	}
 }
 
 func (peer *Peer) RunProxy(address string) error {
@@ -158,14 +199,14 @@ func (peer *Peer) RunProxy(address string) error {
 	}
 
 	if address == `` {
-		address = DefaultProxyAddress
+		address = DefaultProxyHTTPAddress
 	}
 
 	if _, err := netip.ParseAddrPort(address); err != nil {
 		return fmt.Errorf("bad proxy address %q: %v", address, err)
 	}
 
-	log.Infof("Starting HTTP proxy server on %v", address)
+	log.Infof("starting HTTP proxy server at %v", address)
 
 	return http.ListenAndServe(address, handler)
 }
