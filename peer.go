@@ -27,22 +27,24 @@ var DefaultDNS1 = netip.MustParseAddr(`1.1.1.1`)
 var DefaultHostLookupTimeout = 10 * time.Second
 
 type Peer struct {
-	EndpointAddress  string
-	LocalAddresses   []string
-	DNSAddresses     []string
-	PublicKey        string
-	PrivateKey       string
-	AllowedIPs       []string
-	CheckURL         string
-	CheckTimeout     time.Duration
-	RetryDelay       time.Duration
-	ProxyHTTPAddress string
-	wg               *Wireguard
-	tun              tun.Device
-	tnet             *netstack.Net
-	dev              *device.Device
-	endpointAddr     string
-	endpointPort     int
+	EndpointAddress             string
+	LocalAddresses              []string
+	DNSAddresses                []string
+	PublicKey                   string
+	PrivateKey                  string
+	AllowedIPs                  []string
+	CheckURL                    string
+	CheckTimeout                time.Duration
+	RetryDelay                  time.Duration
+	ProxyHTTPAddress            string
+	ProxyHTTPMaxTime            time.Duration
+	ProxyHTTPInsecureSkipVerify bool
+	wg                          *Wireguard
+	tun                         tun.Device
+	tnet                        *netstack.Net
+	dev                         *device.Device
+	endpointAddr                string
+	endpointPort                int
 }
 
 func (peer *Peer) reset() {
@@ -210,7 +212,7 @@ func (peer *Peer) Up() error {
 		var lasterr error
 
 		if err := peer.init(); err == nil {
-			lasterr = peer.RunProxy(peer.ProxyHTTPAddress)
+			lasterr = peer.RunProxyHTTP(peer.ProxyHTTPAddress)
 		} else {
 			lasterr = err
 		}
@@ -229,8 +231,8 @@ func (peer *Peer) Up() error {
 	}
 }
 
-func (peer *Peer) RunProxy(address string) error {
-	var handler = &proxy{
+func (peer *Peer) RunProxyHTTP(address string) error {
+	var handler = &ProxyHTTP{
 		Tunnel: peer.tnet,
 	}
 

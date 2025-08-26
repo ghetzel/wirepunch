@@ -24,6 +24,16 @@ func main() {
 			EnvVar: `WP_PROXY_HTTP_ADDRESS`,
 		},
 		cli.StringFlag{
+			Name:   `http-proxy-max-duration`,
+			Usage:  `Specify a timeout to limit the total time of any request through the proxy, including time to respond.`,
+			EnvVar: `WP_PROXY_HTTP_MAX_DURATION`,
+		},
+		cli.BoolFlag{
+			Name:   `http-proxy-tls-no-verify`,
+			Usage:  `Disable verifification of remote TLS certificates.`,
+			EnvVar: `WP_PROXY_HTTP_TLS_SKIP_VERIFY`,
+		},
+		cli.StringFlag{
 			Name:   `log-level, L`,
 			Usage:  `Level of log output verbosity`,
 			Value:  `info`,
@@ -81,12 +91,14 @@ func main() {
 			DNSAddresses: []string{
 				c.String(`dns-server`),
 			},
-			PublicKey:        c.String(`public-key`),
-			PrivateKey:       c.String(`private-key`),
-			CheckURL:         c.String(`check-url`),
-			CheckTimeout:     c.Duration(`check-url-timeout`),
-			RetryDelay:       c.Duration(`retry-delay`),
-			ProxyHTTPAddress: c.String(`http-proxy`),
+			PublicKey:                   c.String(`public-key`),
+			PrivateKey:                  c.String(`private-key`),
+			CheckURL:                    c.String(`check-url`),
+			CheckTimeout:                c.Duration(`check-url-timeout`),
+			RetryDelay:                  c.Duration(`retry-delay`),
+			ProxyHTTPAddress:            c.String(`http-proxy`),
+			ProxyHTTPMaxTime:            c.Duration(`http-proxy-max-duration`),
+			ProxyHTTPInsecureSkipVerify: c.Bool(`http-proxy-tls-no-verify`),
 		}
 
 		log.FatalIf(peer.Up())

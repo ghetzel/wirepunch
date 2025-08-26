@@ -3,12 +3,12 @@ package main
 import (
 	"crypto/tls"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/ghetzel/go-stockutil/log"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
@@ -44,12 +44,14 @@ func appendHostToXForwardHeader(header http.Header, host string) {
 	header.Set("X-Forwarded-For", host)
 }
 
-type proxy struct {
-	Tunnel *netstack.Net
+type ProxyHTTP struct {
+	Tunnel             *netstack.Net
+	Timeout            time.Duration
+	InsecureSkipVerify bool
 }
 
-func (p *proxy) ServeHTTP(wr http.ResponseWriter, req *http.Request) {
-	log.Printf("%s %s %s", req.RemoteAddr, req.Method, req.URL.Host)
+func (p *ProxyHTTP) ServeHTTP(wr http.ResponseWriter, req *http.Request) {
+	log.Infof(">> [%s] %s %s", req.RemoteAddr, req.Method, req.URL.Host)
 
 	if req.Method == http.MethodConnect {
 		p.handleCONNECT(wr, req)
@@ -61,12 +63,14 @@ func (p *proxy) ServeHTTP(wr http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	client := &http.Client{
+	var client = &http.Client{
+		Timeout: p.Timeout,
 		Transport: &http.Transport{
-			DialContext:     p.Tunnel.DialContext,
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			DialContext: p.Tunnel.DialContext,
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: p.InsecureSkipVerify,
+			},
 		},
-		Timeout: 30 * time.Second,
 	}
 
 	req.RequestURI = ""
@@ -79,12 +83,12 @@ func (p *proxy) ServeHTTP(wr http.ResponseWriter, req *http.Request) {
 	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(wr, "Server Error", http.StatusInternalServerError)
-		log.Printf("ServeHTTP error: %v", err)
+		log.Errorf("proxy error: %v", err)
 		return
 	}
 	defer resp.Body.Close()
 
-	log.Printf("%s %s", req.RemoteAddr, resp.Status)
+	log.Infof("<< [%s] %s", req.RemoteAddr, resp.Status)
 
 	delHopHeaders(resp.Header)
 	copyHeader(wr.Header(), resp.Header)
@@ -92,7 +96,7 @@ func (p *proxy) ServeHTTP(wr http.ResponseWriter, req *http.Request) {
 	io.Copy(wr, resp.Body)
 }
 
-func (p *proxy) handleCONNECT(wr http.ResponseWriter, req *http.Request) {
+func (p *ProxyHTTP) handleCONNECT(wr http.ResponseWriter, req *http.Request) {
 	targetConn, err := p.Tunnel.Dial("tcp", req.Host)
 	if err != nil {
 		http.Error(wr, err.Error(), http.StatusServiceUnavailable)
